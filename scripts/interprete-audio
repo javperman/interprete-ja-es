@@ -1,0 +1,201 @@
+#!/usr/bin/env bash
+# interprete-audio — gestiona los nodos virtuales del intérprete JA ⇄ ES.
+#
+#   setup     Crea/instala los nodos (idempotente).
+#   teardown  Elimina todo lo creado; deja el sistema como estaba.
+#   status    Muestra nodos, enlaces y estado.
+#   verify    Prueba de tono: comprueba que NO hay bucles.
+#
+# Persistencia: ~/.config/pipewire/pipewire-pulse.conf.d/60-interprete.conf
+# (instalado desde pipewire/60-interprete.conf del repo; sobrevive a reinicios).
+#
+# El japonés de fondo en los auriculares NO se hace con un nodo de bucle: la
+# propia aplicación reenvía meet_in.monitor a los auriculares (Fase 2). Menos
+# piezas y volumen/mezcla bajo control de la app.
+#
+# Nada de esto toca la configuración de audio personal del usuario.
+
+set -euo pipefail
+
+REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+CONF_SRC="$REPO_DIR/pipewire/60-interprete.conf"
+PULSE_DST_DIR="$HOME/.config/pipewire/pipewire-pulse.conf.d"
+PULSE_DST="$PULSE_DST_DIR/60-interprete.conf"
+TMP="${XDG_RUNTIME_DIR:-/tmp}/interprete-audio"
+TONE="$TMP/tone.wav"
+
+SINK_IN=meet_in
+SINK_OUT=meet_out
+SOURCE_MIC=meet_mic
+
+# La descripción NO debe contener la palabra "monitor": Chromium/Brave filtra
+# fuentes de monitor y, además, així aparece en Meet con un nombre claro.
+ARGS_SINK_IN="module-null-sink media.class=Audio/Sink sink_name=meet_in channel_map=front-left,front-right sink_properties=device.description=Meet_in"
+ARGS_SINK_OUT="module-null-sink media.class=Audio/Sink sink_name=meet_out channel_map=front-left,front-right sink_properties=device.description=Meet_out"
+ARGS_REMAP="module-remap-source master=meet_out.monitor source_name=meet_mic channel_map=front-left,front-right source_properties=device.description=Micro_del_interprete"
+
+# Fragmentos estables para localizar los módulos aunque cambien sus argumentos.
+FRAG_SINK_IN="sink_name=$SINK_IN"
+FRAG_SINK_OUT="sink_name=$SINK_OUT"
+FRAG_REMAP="source_name=$SOURCE_MIC"
+
+info() { printf '\033[1;34m==>\033[0m %s\n' "$*"; }
+ok()   { printf '\033[1;32m  ok\033[0m %s\n' "$*"; }
+warn() { printf '\033[1;33m  !!\033[0m %s\n' "$*" >&2; }
+die()  { printf '\033[1;31mERROR:\033[0m %s\n' "$*" >&2; exit 1; }
+need() { command -v "$1" >/dev/null 2>&1 || die "falta el comando '$1'"; }
+
+sink_exists()   { pactl list short sinks   | awk '{print $2}' | grep -qx "$1"; }
+source_exists() { pactl list short sources | awk '{print $2}' | grep -qx "$1"; }
+module_id_by_args()  { pactl list short modules | grep -F -- "$1" | awk '{print $1}' | head -n1; }
+module_ids_by_args() { pactl list short modules | grep -F -- "$1" | awk '{print $1}'; }
+
+# ---------------------------------------------------------------- setup
+install_config() {
+    mkdir -p "$PULSE_DST_DIR"
+    if [[ -f "$PULSE_DST" ]] && ! cmp -s "$CONF_SRC" "$PULSE_DST"; then
+        local bak="$PULSE_DST.bak-$(date +%Y%m%d-%H%M%S)"
+        cp -a "$PULSE_DST" "$bak"
+        warn "copia de seguridad del config previo: $bak"
+    fi
+    install -m 0644 "$CONF_SRC" "$PULSE_DST"
+    ok "config instalado: $PULSE_DST"
+}
+
+ensure_runtime_nodes() {
+    if sink_exists "$SINK_IN"; then ok "$SINK_IN ya existe"; else
+        pactl load-module $ARGS_SINK_IN >/dev/null && ok "$SINK_IN creado"; fi
+    if sink_exists "$SINK_OUT"; then ok "$SINK_OUT ya existe"; else
+        pactl load-module $ARGS_SINK_OUT >/dev/null && ok "$SINK_OUT creado"; fi
+    if source_exists "$SOURCE_MIC"; then ok "$SOURCE_MIC ya existe"; else
+        for _ in $(seq 1 20); do sink_exists "$SINK_OUT" && break; sleep 0.1; done
+        pactl load-module $ARGS_REMAP >/dev/null && ok "$SOURCE_MIC creado"; fi
+}
+
+cmd_setup() {
+    need pactl; need pw-cli; need pw-dump
+    info "Instalando configuración y nodos…"
+    install_config
+    ensure_runtime_nodes
+    echo
+    cmd_status
+}
+
+# ----------------------------------------------------------- reload
+# Recarga los nodos de runtime con la configuración actual del repo (útil cuando
+# cambian los argumentos, p. ej. la descripción del micrófono virtual).
+cmd_reload() {
+    need pactl
+    info "Recargando los nodos del intérprete…"
+    for frag in "$FRAG_REMAP" "$FRAG_SINK_OUT" "$FRAG_SINK_IN"; do
+        while read -r id; do
+            [[ -n "$id" ]] || continue
+            pactl unload-module "$id" >/dev/null 2>&1 && ok "módulo $id descargado ($frag)"
+        done < <(module_ids_by_args "$frag")
+    done
+    sleep 0.3
+    ensure_runtime_nodes
+    echo
+    cmd_status
+}
+
+# -------------------------------------------------------------- teardown
+cmd_teardown() {
+    info "Descargando nodos de runtime…"
+    for frag in "$FRAG_REMAP" "$FRAG_SINK_OUT" "$FRAG_SINK_IN"; do
+        while read -r id; do
+            [[ -n "$id" ]] || continue
+            pactl unload-module "$id" >/dev/null 2>&1 && ok "módulo $id descargado ($frag)"
+        done < <(module_ids_by_args "$frag")
+    done
+    info "Eliminando config del proyecto…"
+    rm -f "$PULSE_DST"
+    pw-dump 2>/dev/null | python3 -c '
+import sys, json
+names = {"meet_in", "meet_out", "meet_mic", "meet_in.monitor", "meet_out.monitor"}
+for n in json.load(sys.stdin):
+    p = (n.get("info") or {}).get("props") or {}
+    if p.get("node.name") in names:
+        print(n["id"])
+' | while read -r id; do pw-cli destroy "$id" >/dev/null 2>&1 && ok "nodo $id destruido"; done
+    ok "teardown completado"
+}
+
+# ---------------------------------------------------------------- status
+cmd_status() {
+    info "Nodos del intérprete"
+    echo "  sinks:";   pactl list short sinks   | grep -E "${SINK_IN}|${SINK_OUT}" || echo "    (ninguno)"
+    echo "  sources:"; pactl list short sources | grep -E "${SOURCE_MIC}|${SINK_IN}\.monitor|${SINK_OUT}\.monitor" || echo "    (ninguno)"
+    echo "  sink por defecto: $(pactl get-default-sink)"
+    echo "  enlaces meet_out.monitor -> meet_mic:"
+    pw-link -l 2>/dev/null | grep -E "${SINK_OUT}\.monitor" || echo "    (sin enlaces)"
+}
+
+# ---------------------------------------------------------------- verify
+mean_volume() { # $1 = wav -> mean_volume (dB)
+    ffmpeg -hide_banner -i "$1" -af volumedetect -f null - 2>&1 \
+        | awk '/mean_volume/ {print $(NF-1)}' | tail -n1
+}
+received() { # $1 = wav ; devuelve 0 si supera -50 dB
+    awk "BEGIN{exit !($(mean_volume "$1") > -50)}"
+}
+
+cmd_verify() {
+    need ffmpeg; need pw-cat; need pw-record; need pactl
+    mkdir -p "$TMP"
+    local fails=0
+
+    info "1) Nodos presentes"
+    sink_exists "$SINK_IN"      && ok "sink $SINK_IN"        || { warn "falta $SINK_IN"; fails=$((fails+1)); }
+    sink_exists "$SINK_OUT"     && ok "sink $SINK_OUT"       || { warn "falta $SINK_OUT"; fails=$((fails+1)); }
+    source_exists "$SOURCE_MIC" && ok "source $SOURCE_MIC"   || { warn "falta $SOURCE_MIC"; fails=$((fails+1)); }
+
+    info "2) meet_in NO es el sink por defecto"
+    if [[ "$(pactl get-default-sink)" == "$SINK_IN" ]]; then
+        warn "meet_in ES el sink por defecto (realimentación)"; fails=$((fails+1));
+    else ok "sink por defecto = $(pactl get-default-sink)"; fi
+
+    info "3) Sin enlaces de realimentación"
+    if pw-link -l 2>/dev/null | grep -E "${SINK_IN}:monitor.*->.*(${SINK_OUT}|${SOURCE_MIC})"; then
+        warn "enlace ${SINK_IN}.monitor -> ${SINK_OUT}/${SOURCE_MIC}"; fails=$((fails+1));
+    else ok "meet_in.monitor no realimenta"; fi
+    if pw-link -l 2>/dev/null | grep -E "${SINK_OUT}:monitor.*->.*(alsa|${SINK_IN})"; then
+        warn "la TTS(ja) sale a un sink físico o a meet_in"; fails=$((fails+1));
+    else ok "meet_out.monitor solo va a meet_mic"; fi
+
+    ffmpeg -hide_banner -loglevel error -f lavfi -i "sine=frequency=440:duration=1.5" \
+        -af "volume=20dB" -ar 48000 -ac 2 -y "$TONE"
+
+    info "4) Tono meet_out -> meet_mic (canal de habla)"
+    pw-cat --playback --target "$SINK_OUT" "$TONE" >/dev/null 2>&1 &
+    local pid=$!
+    timeout 2 pw-record --target "$SOURCE_MIC" --rate 48000 --channels 2 --format s16 \
+        "$TMP/rec_mic.wav" >/dev/null 2>&1 || true
+    wait "$pid" 2>/dev/null || true
+    if received "$TMP/rec_mic.wav"; then ok "meet_mic recibe el tono ($(mean_volume "$TMP/rec_mic.wav") dB)"; else
+        warn "meet_mic NO recibe el tono ($(mean_volume "$TMP/rec_mic.wav") dB)"; fails=$((fails+1)); fi
+
+    info "5) Tono meet_in -> captura del monitor (canal de escucha)"
+    pw-cat --playback --target "$SINK_IN" "$TONE" >/dev/null 2>&1 &
+    pid=$!
+    # El monitor de un sink no es un nodo aparte: se pide con stream.capture.sink.
+    timeout 2 pw-record --target "$SINK_IN" -P '{ stream.capture.sink=true }' \
+        --rate 48000 --channels 2 --format s16 \
+        "$TMP/rec_in.wav" >/dev/null 2>&1 || true
+    wait "$pid" 2>/dev/null || true
+    if received "$TMP/rec_in.wav"; then ok "el canal de escucha captura el tono ($(mean_volume "$TMP/rec_in.wav") dB)"; else
+        warn "el canal de escucha NO captura el tono ($(mean_volume "$TMP/rec_in.wav") dB)"; fails=$((fails+1)); fi
+
+    echo
+    if [[ $fails -eq 0 ]]; then ok "VERIFY: todas las comprobaciones pasan"; else
+        die "VERIFY: $fails comprobación(es) fallida(s)"; fi
+}
+
+case "${1:-}" in
+    setup)    cmd_setup ;;
+    reload)   cmd_reload ;;
+    teardown) cmd_teardown ;;
+    status)   cmd_status ;;
+    verify)   cmd_verify ;;
+    *) echo "uso: interprete-audio {setup|reload|teardown|status|verify}"; exit 2 ;;
+esac

@@ -1,0 +1,80 @@
+# config.example.toml — copia a config.toml y ajusta.
+# Las CLAVES nunca van aquí: van en variables de entorno (DEEPSEEK_API_KEY).
+
+[audio]
+# Nombre de los nodos virtuales (deben coincidir con pipewire/60-interprete.conf)
+sink_in = "meet_in" # salida de Meet/Teams; se captura meet_in.monitor
+sink_out = "meet_out" # destino de la TTS en japonés
+source_mic = "meet_mic" # micrófono virtual que ve Meet/Teams
+mic = "" # micrófono FÍSICO que captura el intérprete; vacío = fuente por defecto
+headphones = "" # nodo o nombre de auriculares; vacío = sink por defecto
+ja_monitor_volume = 0.50 # volumen del japonés original en tus auriculares (0-1)
+es_monitor_volume = 0.50 # volumen de TU voz original hacia Meet (0-1, 0 = no enviarla)
+duck_factor = 0.40 # cuánto se atenúan los fondos mientras suena la traducción (1 = nada)
+capture_rate = 48000 # Hz de captura desde PipeWire
+stt_rate = 16000 # Hz que consume el STT
+
+[vad]
+engine = "silero_onnx" # silero_onnx | silero_torch
+threshold = 0.5
+min_silence_ms = 500
+speech_pad_ms = 200
+pre_roll_ms = 300
+max_speech_s = 20
+
+[stt]
+backend = "faster_whisper" # faster_whisper | hermes_socket
+model = "mobiuslabsgmbh/faster-whisper-large-v3-turbo" # ya en caché HF del equipo
+device = "auto" # auto (CUDA y, si la GPU no tiene memoria, CPU) | cuda | cpu
+compute_type = "int8_float16" # int8_float16 (GPU) | int8 (CPU)
+beam_size = 1
+cuda_lib_path = "~/.local/share/hermes-cuda" # libs CUDA 12 de usuario
+auto_language = false # true = el STT detecta el idioma (útil si se mezclan JA/ES)
+no_speech_threshold = 0.6 # confianza de que NO hay voz: por encima se descarta
+log_prob_threshold = -1.0 # confianza del texto: por debajo se descarta
+compression_ratio_threshold = 2.4 # repeticiones en bucle: se descartan
+
+[filters]
+# Qué se descarta antes de traducir (ruidos, frases inventadas y eco).
+hallucination_filter = true # ignora ruidos/toses/silencios y frases que el STT inventa
+echo_guard = true # evita traducir la propia traducción que se escapa por los auriculares
+min_speech_ms = 350 # duración mínima (ms) para considerar que hay una frase
+echo_window_s = 15.0 # cuántos segundos se recuerda lo locutado para detectar el eco
+blocklist = [] # frases extra a ignorar, p. ej. ["hola, probando"]
+
+[mt]
+provider = "vertex" # vertex | gemini | deepseek
+model = "" # vacío = el del proveedor (gemini-3.5-flash-lite / deepseek-flash)
+base_url = "" # vacío = el del proveedor (no aplica a vertex)
+api_key_env = "" # vacío = el del proveedor (GEMINI_API_KEY / DEEPSEEK_API_KEY)
+thinking = false # solo aplica a DeepSeek (por defecto lo activa; aquí off)
+temperature = 0.2
+context_sentences = 4
+glossary = [] # p. ej. ["API", "onboarding"]
+# Vertex AI (Google Cloud):
+project = "your-gcp-project"
+location = "global" # "global" usa aiplatform.googleapis.com
+service_account = "~/.config/interprete/gcp-sa.json" # clave 0600, no versionada
+thinking_level = "minimal" # Vertex: "minimal" (rápido) | "low" | "high"; "" = omitir
+
+[tts.es]
+engine = "piper" # piper
+voice = "es_ES-davefx-medium"
+voices_dir = "~/.local/share/interprete/piper" # install-piper.sh descarga aquí
+length_scale = 1.0 # <1 más rápido, >1 más lento
+
+[tts.ja]
+engine = "voicevox" # voicevox
+url = "http://127.0.0.1:50021"
+speaker = 11 # id de estilo; 11 = 玄野武宏 (voz clara, tono medio, ritmo normal)
+speed_scale = 1.0 # <1 más lento, >1 más rápido
+intonation_scale = 0.85 # <1 melodía más plana; 1.0 suena teatral/anime
+pitch_scale = 0.0 # semitonos; negativo = más grave
+
+[ui]
+mode = "auto" # auto (tui si hay terminal) | tui | subtitles | plain
+show_original = true # muestra el texto original (japonés/español) bajo la traducción
+
+[logging]
+level = "INFO"
+latency_log = "logs/latency.csv"

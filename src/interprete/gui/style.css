@@ -1,0 +1,10 @@
+/* Estilos propios de la app del intérprete. */
+
+.transcript-title {
+    font-weight: bold;
+}
+
+.routing-view {
+    font-family: monospace;
+    font-size: 0.9em;
+}

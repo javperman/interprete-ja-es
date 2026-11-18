@@ -1,0 +1,23 @@
+#!/usr/bin/env bash
+# pre-commit — garantiza que todo cambio de código/documentación queda registrado.
+#
+# Si se modifican src/, scripts/, systemd/ o pipewire/ y docs/CHANGELOG.md no
+# forma parte del commit, añade una entrada automática (ver AGENTS.md §1).
+set -euo pipefail
+
+repo_root="$(git rev-parse --show-toplevel)"
+cd "$repo_root"
+
+staged="$(git diff --cached --name-only)"
+
+if echo "$staged" | grep -qE '^(src/|scripts/|systemd/|pipewire/)'; then
+    if ! echo "$staged" | grep -q '^docs/CHANGELOG.md'; then
+        echo "pre-commit: cambios de código sin entrada en CHANGELOG; añadiendo una automática."
+        files="$(echo "$staged" | tr '\n' ',' | sed 's/,$//')"
+        python3 scripts/update-changelog.py \
+            --task "Cambio automático registrado por el hook pre-commit" \
+            --files "$files" \
+            --notes "Entrada generada automáticamente; edítala si necesitas más detalle."
+        git add docs/CHANGELOG.md
+    fi
+fi

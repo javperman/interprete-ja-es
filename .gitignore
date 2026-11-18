@@ -1,0 +1,30 @@
+# Entorno
+.venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+build/
+dist/
+
+# Configuración local (puede contener preferencias personales; nunca claves)
+config.toml
+.env
+env
+
+# Modelos y cachés
+models/
+*.onnx
+*.pt
+.cache/
+
+# Logs
+*.log
+logs/
+
+# Editor
+.vscode/
+.idea/
+*.swp
+
+# Clips de prueba generados con VOICEVOX
+tests/clips/

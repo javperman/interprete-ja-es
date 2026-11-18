@@ -1,0 +1,15 @@
+[Unit]
+Description=VOICEVOX Engine (TTS japonés) para el intérprete JA ⇄ ES
+Documentation=file:%h/Programacion/interprete-ja-es/ARCHITECTURE.md
+After=network.target
+
+[Service]
+Type=simple
+ExecStart=%h/.local/share/voicevox-engine/current/run --host 127.0.0.1 --port 50021
+WorkingDirectory=%h/.local/share/voicevox-engine/current
+Restart=on-failure
+RestartSec=2
+# El motor CPU no necesita GPU; no compite con la VRAM de Whisper.
+
+[Install]
+WantedBy=default.target

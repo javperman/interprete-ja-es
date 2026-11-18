@@ -1,0 +1,48 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "interprete-ja-es"
+version = "0.1.0"
+description = "Intérprete simultáneo bidireccional japonés ⇄ español para Meet/Teams sobre PipeWire"
+readme = "README.md"
+requires-python = ">=3.14"
+license = { text = "GPL-3.0-or-later" }
+dependencies = [
+    # STT
+    "faster-whisper>=1.2",
+    # VAD (Silero ONNX; se evita torch a propósito)
+    "onnxruntime>=1.20",
+    "numpy>=2.0",
+    # Audio (I/O y remuestreo)
+    "soundfile>=0.13",
+    "soxr>=0.5",
+    # Cliente HTTP (DeepSeek, Gemini y VOICEVOX)
+    "httpx>=0.27",
+    # TTS español (Piper)
+    "piper-tts>=1.8",
+    # Autenticación de Google (Vertex AI, proveedor de traducción)
+    "google-auth>=2.30",
+    "requests>=2.31",  # transporte de google-auth
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8", "ruff>=0.6"]
+
+[project.scripts]
+interprete = "interprete.__main__:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/interprete"]
+
+[tool.hatch.build.targets.wheel.force-include]
+"src/interprete/gui/style.css" = "interprete/gui/style.css"
+"src/interprete/gui/assets" = "interprete/gui/assets"
+
+[tool.ruff]
+line-length = 100
+target-version = "py314"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
