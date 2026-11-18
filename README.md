@@ -117,14 +117,7 @@ The design target is **2–4 s** from the end of a phrase. These numbers are not
 
 ## Demo
 
-<!-- PENDIENTE: grabar GIF real; no usar capturas inventadas. -->
-
-A short demo GIF is pending. Planned shots:
-
-1. Start the desktop app and show the meeting/settings tabs.
-2. Play a Japanese clip and show the Spanish transcript + subtitle.
-3. Speak Spanish and show the Japanese transcript + virtual microphone.
-4. Show `interprete doctor` with all checks green.
+No demo recording is included. The project is documented through the architecture, the test suite and the source; a real recording would require a live meeting, audio devices and the GPU setup described above.
 
 No mock screenshot is shipped in place of a real recording.
 
